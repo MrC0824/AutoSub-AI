@@ -1,0 +1,94 @@
+name: Dynamic Release Automation 🚀
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    # 核心修改：切换到 Windows 运行环境
+    runs-on: windows-latest
+
+    # ⚠️ 必须添加写权限，否则最后一步修改 Release 会失败
+    permissions:
+      contents: write
+
+    steps:
+      - name: ⬇️ Checkout code
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------
+      # 1. 读取 package.json 并设置环境变量
+      # ----------------------------------------------------
+      - name: 🔍 Get Package Manager from package.json
+        id: get_config
+        shell: bash # 使用 bash 运行 jq 比较方便
+        run: |
+          PACKAGE_MANAGER=$(jq -r '.ciConfig.packageManager' package.json)
+          echo "PACKAGE_MANAGER=$PACKAGE_MANAGER" >> $GITHUB_ENV
+
+      # ----------------------------------------------------
+      # 2. 动态配置 Node.js 环境 (Windows)
+      # ----------------------------------------------------
+      - name: 🛠️ Set up Node.js (Windows Environment)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ----------------------------------------------------
+      # 3. 启用 Corepack
+      # ----------------------------------------------------
+      - name: ⚙️ Enable Corepack (Conditional)
+        if: ${{ env.PACKAGE_MANAGER == 'pnpm' }}
+        shell: bash
+        run: corepack enable pnpm
+
+      # ----------------------------------------------------
+      # 4. 手动配置缓存 (Windows 路径)
+      # ----------------------------------------------------
+      - name: 📥 Cache dependencies
+        uses: actions/cache@v4
+        if: ${{ env.PACKAGE_MANAGER == 'pnpm' }}
+        with:
+          # Windows 下 pnpm store 路径
+          path: ~\AppData\Local\pnpm\store\v3
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # ----------------------------------------------------
+      # 5. 动态安装依赖
+      # ----------------------------------------------------
+      - name: 📦 Install Dependencies (Dynamic)
+        shell: powershell # 显式指定 PowerShell
+        run: |
+          if ("${{ env.PACKAGE_MANAGER }}" -eq "pnpm") {
+            # 建议给路径加上双引号，防止解析错误
+            pnpm install --frozen-lockfile --store-dir "$env:AppData\Local\pnpm\store\v3"
+          } elseif ("${{ env.PACKAGE_MANAGER }}" -eq "npm") {
+            npm install
+          }
+
+      # ----------------------------------------------------
+      # 6. 动态构建和使用 electron-builder 自动发布
+      # ----------------------------------------------------
+      - name: ⚙️ Build and Publish with Electron-Builder
+        # ✅ 关键修复：将 shell 移到这里，解决 Line 81 报错
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 建议加上 'run'，这样对 npm 和 pnpm 都通用
+        # 使用 '&' 是 PowerShell 执行命令的标准方式
+        run: |
+          & ${{ env.PACKAGE_MANAGER }} run electron:build
+
+      # ----------------------------------------------------
+      # 7. 自动发布：将 Draft 转为正式版
+      # ----------------------------------------------------
+      - name: 🚀 Publish Release (Remove Draft)
+        if: success()
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit ${{ github.ref_name }} --draft=false
