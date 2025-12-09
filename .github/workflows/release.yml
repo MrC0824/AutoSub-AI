@@ -7,88 +7,129 @@ on:
 
 jobs:
   build-and-release:
-    # 核心修改：切换到 Windows 运行环境
     runs-on: windows-latest
 
-    # ⚠️ 必须添加写权限，否则最后一步修改 Release 会失败
     permissions:
-      contents: write
+      contents: write # 必须权限：允许上传 Release 附件和推送代码
 
     steps:
       - name: ⬇️ Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 关键修改：获取完整历史，确保能切换到 main 分支进行回写
 
       # ----------------------------------------------------
-      # 1. 读取 package.json 并设置环境变量
+      # 1. 获取包管理器配置
       # ----------------------------------------------------
-      - name: 🔍 Get Package Manager from package.json
+      - name: 🔍 Get Package Manager
         id: get_config
-        shell: bash # 使用 bash 运行 jq 比较方便
+        shell: bash
         run: |
           PACKAGE_MANAGER=$(jq -r '.ciConfig.packageManager' package.json)
           echo "PACKAGE_MANAGER=$PACKAGE_MANAGER" >> $GITHUB_ENV
 
       # ----------------------------------------------------
-      # 2. 动态配置 Node.js 环境 (Windows)
+      # 2. 准备 Node 环境
       # ----------------------------------------------------
-      - name: 🛠️ Set up Node.js (Windows Environment)
+      - name: 🛠️ Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # ----------------------------------------------------
-      # 3. 启用 Corepack
-      # ----------------------------------------------------
-      - name: ⚙️ Enable Corepack (Conditional)
+      - name: ⚙️ Enable Corepack
         if: ${{ env.PACKAGE_MANAGER == 'pnpm' }}
         shell: bash
         run: corepack enable pnpm
 
-      # ----------------------------------------------------
-      # 4. 手动配置缓存 (Windows 路径)
-      # ----------------------------------------------------
       - name: 📥 Cache dependencies
         uses: actions/cache@v4
         if: ${{ env.PACKAGE_MANAGER == 'pnpm' }}
         with:
-          # Windows 下 pnpm store 路径
           path: ~\AppData\Local\pnpm\store\v3
           key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
       # ----------------------------------------------------
-      # 5. 动态安装依赖
+      # 3. 安装依赖
       # ----------------------------------------------------
-      - name: 📦 Install Dependencies (Dynamic)
-        shell: powershell # 显式指定 PowerShell
+      - name: 📦 Install Dependencies
+        shell: powershell
         run: |
           if ("${{ env.PACKAGE_MANAGER }}" -eq "pnpm") {
-            # 建议给路径加上双引号，防止解析错误
             pnpm install --frozen-lockfile --store-dir "$env:AppData\Local\pnpm\store\v3"
           } elseif ("${{ env.PACKAGE_MANAGER }}" -eq "npm") {
             npm install
           }
 
       # ----------------------------------------------------
-      # 6. 动态构建和使用 electron-builder 自动发布
+      # 临时同步 Tag 版本号用于构建
       # ----------------------------------------------------
-      - name: ⚙️ Build and Publish with Electron-Builder
-        # ✅ 关键修复：将 shell 移到这里，解决 Line 81 报错
+      - name: 🔄 Temp Sync Version for Build
         shell: powershell
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        # 建议加上 'run'，这样对 npm 和 pnpm 都通用
-        # 使用 '&' 是 PowerShell 执行命令的标准方式
         run: |
-          & ${{ env.PACKAGE_MANAGER }} run electron:build
+          $tagName = "${{ github.ref_name }}"
+          $version = $tagName -replace "^v", ""
+          Write-Host "Temp bumping package.json to: $version for release build"
+          npm version $version --no-git-tag-version --allow-same-version
 
       # ----------------------------------------------------
-      # 7. 自动发布：将 Draft 转为正式版
+      # 4. 构建并直接发布
       # ----------------------------------------------------
-      - name: 🚀 Publish Release (Remove Draft)
-        if: success()
+      - name: 🚀 Build and Publish
         shell: powershell
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit ${{ github.ref_name }} --draft=false
+        run: |
+          # 策略说明：
+          # 不传递额外参数，直接运行 electron:build 脚本。
+          # 这样可以避免参数误传给脚本末尾的 'node -e' 导致报错。
+          # electron-builder 会自动读取 package.json 中的 releaseType: release 配置。
+
+          if ("${{ env.PACKAGE_MANAGER }}" -eq "pnpm") {
+            pnpm run electron:build
+          } elseif ("${{ env.PACKAGE_MANAGER }}" -eq "npm") {
+            npm run electron:build
+          } else {
+            Write-Error "Unknown package manager"
+            exit 1
+          }
+
+      # ----------------------------------------------------
+      # 自动将版本号写回主分支 (Sync Back)
+      # ----------------------------------------------------
+      - name: 💾 Sync Version Back to Repo
+        if: success() # 只有构建发布成功了才执行这一步
+        shell: bash   # 使用 bash 方便处理 git 命令
+        run: |
+          # 配置机器人身份
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # 获取纯数字版本号 (去掉 v)
+          TAG_NAME="${{ github.ref_name }}"
+          VERSION=${TAG_NAME#v}
+          echo "Target Version to write back: $VERSION"
+
+          # 切换回主分支 (Tag 是分离头指针，必须切回主分支才能提交)
+          # ⚠️ 注意：如果你代码库的主分支叫 master，请把下面的 main 都改为 master
+          git fetch origin main
+          git checkout main
+          git pull origin main
+
+          # 再次修改 package.json (因为切换分支后文件被还原了)
+          npm version $VERSION --no-git-tag-version --allow-same-version
+
+          # 提交并推送
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Version changed. Committing..."
+            git add package.json
+            
+            # [skip ci] 很重要，防止这次提交又触发新的构建循环
+            git commit -m "chore: auto bump version to $VERSION [skip ci]"
+            
+            git push origin main
+            echo "✅ Successfully synced version back to main branch!"
+          else
+            echo "Version is already up to date."
+          fi
