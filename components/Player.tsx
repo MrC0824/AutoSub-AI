@@ -17,8 +17,12 @@ interface PlayerProps {
   isExporting: boolean;
   isPreviewMode?: boolean;
   onTriggerFileSelect: () => void;
+  // New prop for drag and drop
+  onFileDrop?: (file: File) => void;
   // New prop to sync time with App
   onTimeUpdate?: (time: number) => void;
+  // Style override
+  className?: string;
 }
 
 // Memoizing the Player component is CRITICAL to prevent re-renders of the video element 
@@ -31,13 +35,16 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
   isExporting, 
   isPreviewMode = false,
   onTriggerFileSelect,
-  onTimeUpdate
+  onFileDrop,
+  onTimeUpdate,
+  className = ""
 }, ref) => {
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isHovering, setIsHovering] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   
   // Optimization: Store active subtitle in state to prevent Overlay from re-rendering on every time update
   const [activeSubtitle, setActiveSubtitle] = useState<SubtitleSegment | null>(null);
@@ -211,7 +218,8 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
   }, [isPlaying, updateUI]);
 
 
-  const togglePlay = () => {
+  const togglePlay = (e?: React.MouseEvent | React.TouchEvent) => {
+    e?.stopPropagation();
     if (localVideoRef.current) {
       if (localVideoRef.current.paused) {
         localVideoRef.current.play().catch((e) => {
@@ -226,7 +234,8 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
     }
   };
 
-  const toggleFullscreen = () => {
+  const toggleFullscreen = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen().catch(err => {
@@ -238,6 +247,7 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
     const time = parseFloat(e.target.value);
     if (localVideoRef.current) {
       localVideoRef.current.currentTime = time;
@@ -250,6 +260,7 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    e.stopPropagation();
     const vol = parseFloat(e.target.value);
     setVolume(vol);
     if (localVideoRef.current) {
@@ -257,7 +268,8 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
     }
   };
 
-  const toggleMute = () => {
+  const toggleMute = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
     if (!localVideoRef.current) return;
     
     if (volume > 0) {
@@ -273,15 +285,51 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
     }
   };
 
+  // Drag and Drop Handlers
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!videoUrl) {
+        setIsDragging(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    if (videoUrl) return; // Prevent drop if video is already loaded
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        // Simple check for video MIME type
+        if (file.type.startsWith('video/') && onFileDrop) {
+            onFileDrop(file);
+        }
+    }
+  };
+
   // REMOVED !isExporting check to keep controls visible during background export
   const showControls = videoUrl && (!isPlaying || isHovering);
 
+  // Added touch-none to container class to prevent browser zoom/pan on the player
+  // Added touch-manipulation to play button
   return (
     <div 
         ref={containerRef}
-        className="relative w-full aspect-video bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10 group select-none"
+        className={`relative bg-black rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/10 group select-none touch-none ${className}`}
         onMouseEnter={() => setIsHovering(true)}
         onMouseLeave={() => setIsHovering(false)}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
     >
         {videoUrl ? (
             <>
@@ -309,91 +357,101 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
                 />
 
                 {!isPlaying && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer" onClick={togglePlay}>
-                    <div className="w-16 h-16 bg-black/50 rounded-full flex items-center justify-center border border-white/10 hover:scale-110 transition-transform shadow-lg">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white ml-1" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                      </svg>
+                  // Added pb-12 to visually center the play button higher, away from bottom controls
+                  // Added touch-manipulation to play button to ensure fast tap response
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer z-10 pb-12 touch-manipulation" onClick={togglePlay}>
+                    <div className="w-12 h-12 sm:w-16 sm:h-16 bg-black/50 rounded-full flex items-center justify-center border border-white/10 hover:scale-110 transition-transform shadow-lg backdrop-blur-sm group">
+                       <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 sm:h-8 sm:w-8 text-white ml-1" viewBox="0 0 24 24" fill="currentColor">
+                         <path d="M8 5v14l11-7z" />
+                       </svg>
                     </div>
                   </div>
                 )}
 
-                <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-4 pt-12 pb-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <div className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-2 pt-16 sm:px-4 sm:pt-20 sm:pb-4 transition-opacity duration-300 flex flex-col justify-end z-40 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}>
                   
-                  <div className="flex items-center gap-2 mb-2 group/progress">
-                     <input
-                      ref={progressBarRef}
-                      type="range"
-                      min="0"
-                      max={duration || 0}
-                      step="0.01"
-                      defaultValue="0"
-                      onChange={handleSeek}
-                      style={{ 
-                          backgroundImage: 'linear-gradient(#3b82f6, #3b82f6)', 
-                          backgroundSize: '0% 100%', 
-                          backgroundRepeat: 'no-repeat' 
-                      }}
-                      className="w-full h-1.5 bg-white/30 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:scale-125 transition-all"
-                    />
-                  </div>
+                  {/* Interactive Control Area Wrapper - Catches clicks to prevent fall-through to video */}
+                  <div className="flex flex-col gap-1 sm:gap-2 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+                    
+                    <div className="flex items-center gap-2 mb-1 sm:mb-2 group/progress">
+                      <input
+                        ref={progressBarRef}
+                        type="range"
+                        min="0"
+                        max={duration || 0}
+                        step="0.01"
+                        defaultValue="0"
+                        onChange={handleSeek}
+                        style={{ 
+                            backgroundImage: 'linear-gradient(#3b82f6, #3b82f6)', 
+                            backgroundSize: '0% 100%', 
+                            backgroundRepeat: 'no-repeat' 
+                        }}
+                        className="w-full h-1.5 bg-white/30 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:scale-125 transition-all"
+                      />
+                    </div>
 
-                  <div className="flex items-center justify-between text-white">
-                    <div className="flex items-center gap-4">
-                      <button onClick={togglePlay} className="hover:text-blue-400 transition-colors">
-                        {isPlaying ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
-                          </svg>
-                        )}
-                      </button>
-
-                      <div ref={timeDisplayRef} className="text-xs font-mono text-slate-300 min-w-[80px]">
-                        0:00 / 0:00
-                      </div>
-
-                      <div className="flex items-center gap-2 group/volume">
-                        <button onClick={toggleMute} className="focus:outline-none hover:text-white text-slate-300 transition-colors">
-                          {volume === 0 ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                               <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                    <div className="flex items-center justify-between text-white">
+                      <div className="flex items-center gap-3 sm:gap-4">
+                        <button onClick={togglePlay} className="hover:text-blue-400 transition-colors p-1">
+                          {isPlaying ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 sm:h-7 sm:w-7" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
                             </svg>
                           ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0117 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.414z" clipRule="evenodd" />
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 sm:h-7 sm:w-7" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" />
                             </svg>
                           )}
                         </button>
-                        <input 
-                          type="range" 
-                          min="0" max="1" step="0.1"
-                          value={volume}
-                          onChange={handleVolumeChange}
-                          className="w-20 h-1 bg-white/30 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
-                        />
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-4">
-                      <span className="text-xs text-slate-400 font-medium px-2 py-1 bg-white/10 rounded">
-                        {viewMode === 'dual' ? '双语' : viewMode === 'cn' ? '中文' : viewMode === 'en' ? '英文' : '关闭'}
-                      </span>
-                      <button onClick={toggleFullscreen} className="hover:text-blue-400 transition-colors">
-                        {isFullscreen ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                             <path fillRule="evenodd" d="M5 8a1 1 0 011-1h1V6a1 1 0 012 0v3.5a1 1 0 01-1 1H4.5a1 1 0 01-1-1V8zm10 0a1 1 0 00-1-1h-1V6a1 1 0 00-2 0v3.5a1 1 0 001 1h3.5a1 1 0 001-1V8zm-10 4a1 1 0 001 1h1v2a1 1 0 002 0v-3.5a1 1 0 00-1-1H4.5a1 1 0 00-1 1v3.5zm10 0a1 1 0 01-1 1h-1v2a1 1 0 01-2 0v-3.5a1 1 0 011-1h3.5a1 1 0 011 1v3.5z" clipRule="evenodd" />
-                          </svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fillRule="evenodd" d="M3 4a1 1 0 011-1h4a1 1 0 010 2H6.414l2.293 2.293a1 1 0 01-1.414 1.414L5 6.414V8a1 1 0 01-2 0V4zm9 1a1 1 0 110-2h4a1 1 0 011 1v4a1 1 0 11-2 0V6.414l-2.293 2.293a1 1 0 11-1.414-1.414L13.586 5H12zm-9 9a1 1 0 110 2h4a1 1 0 110-2H5v-1.586l2.293-2.293a1 1 0 111.414 1.414L6.414 15H8a1 1 0 110 2H4z" clipRule="evenodd" />
-                            <path d="M15 11a1 1 0 112 0v4a1 1 0 01-1 1h-4a1 1 0 110-2h1.586l-2.293-2.293a1 1 0 111.414-1.414L15 12.586V11z" />
-                          </svg>
-                        )}
-                      </button>
+                        <div ref={timeDisplayRef} className="text-[10px] sm:text-xs font-mono text-slate-300 min-w-[60px] sm:min-w-[80px]">
+                          0:00 / 0:00
+                        </div>
+
+                        <div className="flex items-center gap-2 group/volume">
+                          <button onClick={toggleMute} className="focus:outline-none hover:text-white text-slate-300 transition-colors p-1">
+                            {volume === 0 ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM12.293 7.293a1 1 0 011.414 0L15 8.586l1.293-1.293a1 1 0 111.414 1.414L16.414 10l1.293 1.293a1 1 0 01-1.414 1.414L15 11.414l-1.293 1.293a1 1 0 01-1.414-1.414L13.586 10l-1.293-1.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                              </svg>
+                            ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217zM14.657 2.929a1 1 0 011.414 0A9.972 9.972 0 0119 10a9.972 9.972 0 01-2.929 7.071 1 1 0 01-1.414-1.414A7.971 7.971 0 0117 10c0-2.21-.894-4.208-2.343-5.657a1 1 0 010-1.414zm-2.829 2.828a1 1 0 011.415 0A5.983 5.983 0 0115 10a5.984 5.984 0 01-1.757 4.243 1 1 0 01-1.415-1.415A3.984 3.984 0 0013 10a3.983 3.983 0 00-1.172-2.828 1 1 0 010-1.414z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </button>
+                          <input 
+                            type="range" 
+                            min="0" max="1" step="0.1"
+                            value={volume}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={handleVolumeChange}
+                            className="w-16 sm:w-20 h-1 bg-white/30 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 sm:gap-4">
+                        <span className="text-[10px] sm:text-xs text-slate-400 font-medium px-1.5 py-0.5 sm:px-2 sm:py-1 bg-white/10 rounded select-none">
+                          {viewMode === 'dual' ? '双语' : viewMode === 'cn' ? '中文' : viewMode === 'en' ? '英文' : '关闭'}
+                        </span>
+                        <button 
+                          onClick={toggleFullscreen} 
+                          className="p-2 sm:p-2 hover:bg-white/10 rounded-lg transition-colors text-white/90 hover:text-blue-400"
+                          title={isFullscreen ? "退出全屏" : "全屏"}
+                        >
+                          {isFullscreen ? (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M15 9v-4.5M15 9h4.5M15 9l5.25-5.25M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 15v4.5M15 15h4.5M15 15l5.25 5.25" />
+                              </svg>
+                          ) : (
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M20.25 3.75v4.5m0-4.5h-4.5m4.5 0L15 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 20.25v-4.5m0 4.5h-4.5m4.5 0L15 15" />
+                              </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -401,15 +459,25 @@ export const Player = React.memo(forwardRef<HTMLVideoElement, PlayerProps>(({
         ) : (
             <div 
                 onClick={onTriggerFileSelect}
-                className="w-full h-full flex flex-col items-center justify-center cursor-pointer bg-gradient-to-b from-slate-900 to-black hover:from-slate-800 transition-colors"
+                className={`w-full h-full flex flex-col items-center justify-center cursor-pointer transition-colors duration-300 ${
+                    isDragging 
+                    ? 'bg-blue-900/30 border-2 border-dashed border-blue-500' 
+                    : 'bg-gradient-to-b from-slate-900 to-black hover:from-slate-800 border-2 border-transparent'
+                }`}
             >
-                <div className="w-24 h-24 bg-slate-800/50 rounded-full flex items-center justify-center mb-6 border border-slate-700 shadow-xl group-hover:scale-110 group-hover:border-blue-500/50 group-hover:bg-slate-800 transition-all duration-300">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 text-slate-400 group-hover:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 shadow-xl transition-all duration-300 ${
+                    isDragging 
+                    ? 'bg-blue-600 scale-110 border-blue-400' 
+                    : 'bg-slate-800/50 border border-slate-700 group-hover:scale-110 group-hover:border-blue-500/50 group-hover:bg-slate-800'
+                }`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" className={`h-8 w-8 transition-colors ${isDragging ? 'text-white' : 'text-slate-400 group-hover:text-blue-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                 </div>
-                <p className="text-2xl font-bold text-white mb-2 tracking-tight">Click to Upload Video</p>
-                <p className="text-sm text-slate-500">Support MP4 / WebM (Unlimited Size)</p>
+                <p className={`text-lg font-bold mb-1 tracking-tight transition-colors ${isDragging ? 'text-blue-300' : 'text-white'}`}>
+                    {isDragging ? '松开以上传视频' : '点击或拖拽上传视频'}
+                </p>
+                <p className={`text-sm ${isDragging ? 'text-blue-200' : 'text-slate-500'}`}>支持 MP4 / WebM (无大小限制)</p>
               </div>
         )}
     </div>

@@ -8,6 +8,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    minWidth: 375, // Increased to prevent layout squeezing (covers large phones/tablets)
+    minHeight: 667, // Ensure all controls and some subtitle list are visible
     title: "AutoSub AI",
     // Set icon for window title bar and taskbar.
     // Use path.join to correctly locate the icon.

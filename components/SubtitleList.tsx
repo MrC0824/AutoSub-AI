@@ -21,13 +21,25 @@ const SubtitleItem = React.memo(({
 }) => {
   const activeRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to active element
+  // Auto-scroll to active element using scrollTo instead of scrollIntoView
+  // to avoid parent container scrolling/shaking
   useEffect(() => {
     if (isActive && activeRef.current) {
-        activeRef.current.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center' // 'center' provides better context than 'start' or 'nearest'
-        });
+        const el = activeRef.current;
+        const container = el.parentElement;
+        if (container) {
+            const containerHeight = container.clientHeight;
+            const elementTop = el.offsetTop;
+            const elementHeight = el.clientHeight;
+            
+            // Calculate centered position
+            const scrollTo = elementTop - (containerHeight / 2) + (elementHeight / 2);
+            
+            container.scrollTo({
+                top: scrollTo,
+                behavior: 'smooth'
+            });
+        }
     }
   }, [isActive]);
   
@@ -74,7 +86,7 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
+    <div className="flex flex-col h-full w-full bg-slate-800 rounded-xl overflow-hidden border border-slate-700 shadow-xl">
       <div className="p-4 bg-slate-900 border-b border-slate-700 flex justify-between items-center flex-shrink-0">
         <h3 className="font-semibold text-lg text-white">字幕列表</h3>
         <span className="text-xs text-slate-400 bg-slate-800 px-2 py-1 rounded">
@@ -83,7 +95,7 @@ export const SubtitleList: React.FC<SubtitleListProps> = ({ subtitles, currentTi
       </div>
       
       {/* Scrollable Area */}
-      <div ref={listRef} className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+      <div ref={listRef} className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar relative">
         {subtitles.length === 0 ? (
           <div className="text-center text-slate-500 mt-10 text-sm">
             生成的字幕将显示在这里。<br/>点击时间轴可跳转视频。
