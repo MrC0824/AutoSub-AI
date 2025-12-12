@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { ProcessingStatus, SubtitleSegment } from "../types";
+import { ProcessingStatus, SubtitleSegment, TranslationMode } from "../types";
 
 // Helper to convert File to Base64 string
 const fileToBase64 = async (file: File): Promise<string> => {
@@ -91,10 +91,11 @@ const postProcessSubtitles = (subtitles: SubtitleSegment[]): SubtitleSegment[] =
   return processed;
 };
 
-// Updated signature to accept modelName
+// Updated signature to accept modelName and translationMode
 export const generateSubtitles = async (
     file: File, 
     modelName: string, 
+    translationMode: TranslationMode,
     onProgress?: (status: ProcessingStatus) => void
 ): Promise<SubtitleSegment[]> => {
   // Access API key safely. 
@@ -126,21 +127,25 @@ export const generateSubtitles = async (
         },
         english: {
           type: Type.STRING,
-          description: "English transcription.",
+          description: "English text content (transcription or translation).",
         },
         chinese: {
           type: Type.STRING,
-          description: "Chinese translation.",
+          description: "Chinese text content (transcription or translation).",
         },
       },
       required: ["startTime", "endTime", "english", "chinese"],
     },
   };
 
+  const taskInstruction = translationMode === 'en_to_cn' 
+      ? "Transcribe the English audio and translate it to Simplified Chinese."
+      : "Transcribe the Chinese audio and translate it to English.";
+
   const systemInstruction = `You are a professional video subtitler obsessed with frame-perfect audio synchronization.
         
   TASK:
-  1. Transcribe the English audio and translate it to Simplified Chinese.
+  1. ${taskInstruction}
   2. Output a JSON array of subtitle segments.
 
   CRITICAL RULES FOR 100% SYNC (STRICT ADHERENCE REQUIRED):

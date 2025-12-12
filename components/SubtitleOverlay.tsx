@@ -10,19 +10,31 @@ interface SubtitleOverlayProps {
 export const SubtitleOverlay = React.memo<SubtitleOverlayProps>(({ activeSubtitle, viewMode, style }) => {
   if (!activeSubtitle || viewMode === 'off') return null;
 
+  // Strong text outline/shadow for readability on transparent background
+  // Simulates a black stroke + soft drop shadow
+  const textShadowStyle = `
+    2px 2px 0 rgba(0,0,0,0.8),
+    -1.5px -1.5px 0 rgba(0,0,0,0.8),
+    1.5px -1.5px 0 rgba(0,0,0,0.8),
+    -1.5px 1.5px 0 rgba(0,0,0,0.8),
+    1.5px 1.5px 0 rgba(0,0,0,0.8),
+    0px 2px 4px rgba(0,0,0,0.8)
+  `.replace(/\s+/g, ' ').trim();
+
   return (
     <div 
-      className="absolute left-0 right-0 flex flex-col items-center pointer-events-none z-20 space-y-2 transition-all duration-300 will-change-transform"
+      className="absolute left-0 right-0 flex flex-col items-center pointer-events-none z-50 space-y-1 transition-all duration-300 will-change-transform"
       style={{ bottom: `${style.verticalPosition}%` }}
     >
       
       {/* English Subtitle */}
       {(viewMode === 'dual' || viewMode === 'en') && (
         <div 
-          className="bg-black/70 px-6 py-2 rounded-lg font-medium shadow-lg text-center whitespace-pre-wrap max-w-[95%] break-words leading-relaxed"
+          className="font-medium text-center whitespace-pre-wrap max-w-[95%] break-words leading-relaxed px-4"
           style={{
             color: style.enColor,
             fontSize: `${style.enSize}px`,
+            textShadow: textShadowStyle
           }}
         >
           {activeSubtitle.english}
@@ -32,11 +44,11 @@ export const SubtitleOverlay = React.memo<SubtitleOverlayProps>(({ activeSubtitl
       {/* Chinese Subtitle */}
       {(viewMode === 'dual' || viewMode === 'cn') && (
         <div 
-          className="bg-black/70 px-6 py-1.5 rounded-lg font-bold shadow-lg tracking-wide text-center whitespace-pre-wrap max-w-[95%] break-words leading-relaxed"
+          className="font-bold tracking-wide text-center whitespace-pre-wrap max-w-[95%] break-words leading-relaxed px-4"
           style={{
             color: style.cnColor,
             fontSize: `${style.cnSize}px`,
-            textShadow: '0px 2px 4px rgba(0,0,0,0.8)',
+            textShadow: textShadowStyle,
           }}
         >
           {activeSubtitle.chinese}

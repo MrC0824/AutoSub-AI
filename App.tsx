@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ProcessingStatus, SubtitleSegment, VideoData, SubtitleViewMode, SubtitleStyle } from './types';
+import { ProcessingStatus, SubtitleSegment, VideoData, SubtitleViewMode, SubtitleStyle, TranslationMode } from './types';
 import { generateSubtitles } from './services/geminiService';
 import { Player } from './components/Player';
 import { SubtitleList } from './components/SubtitleList';
@@ -13,6 +13,19 @@ const MODELS = [
   { id: 'gemini-1.5-pro', label: 'gemini-1.5-pro (稳健保底)', disabled: false },
   { id: 'gemini-1.5-flash', label: 'gemini-1.5-flash (旧版备用)', disabled: false },
   { id: 'gemini-exp-1206', label: 'gemini-exp-1206 (实验尝鲜)', disabled: false },
+];
+
+const TRANS_MODES = [
+  { id: 'en_to_cn', label: '英语 -> 中文' },
+  { id: 'cn_to_en', label: '中文 -> 英语' },
+];
+
+const EXPORT_FORMATS = [
+  { id: 'mp4', label: 'MP4' },
+  { id: 'webm', label: 'WebM' },
+  { id: 'mov', label: 'MOV' },
+  { id: 'mkv', label: 'MKV' },
+  { id: 'avi', label: 'AVI' },
 ];
 
 export const App: React.FC = () => {
@@ -35,6 +48,10 @@ export const App: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<string>('gemini-2.5-flash');
   const [showModelMenu, setShowModelMenu] = useState<boolean>(false);
 
+  // Translation Mode Selection
+  const [translationMode, setTranslationMode] = useState<TranslationMode>('en_to_cn');
+  const [showTransMenu, setShowTransMenu] = useState<boolean>(false);
+
   // View State
   const [viewMode, setViewMode] = useState<SubtitleViewMode>('dual');
   const [isPreviewMode, setIsPreviewMode] = useState<boolean>(false);
@@ -42,6 +59,7 @@ export const App: React.FC = () => {
   // Export State
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('mp4');
+  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [exportTimeLeft, setExportTimeLeft] = useState<number | null>(null);
   const [exportResult, setExportResult] = useState<{success: boolean, msg?: string} | null>(null);
@@ -49,6 +67,10 @@ export const App: React.FC = () => {
   // Upload State
   const [uploadStartTime, setUploadStartTime] = useState<number | null>(null);
   const [uploadElapsed, setUploadElapsed] = useState<number>(0);
+
+  // Collapsible Panels State - Default to false (collapsed) for mobile
+  const [isControlPanelOpen, setIsControlPanelOpen] = useState<boolean>(false);
+  const [isSubtitleListOpen, setIsSubtitleListOpen] = useState<boolean>(false);
 
   // Export Cache
   const cachedExportRef = useRef<{
@@ -63,7 +85,7 @@ export const App: React.FC = () => {
     cnSize: 15, 
     enColor: '#ffffff',
     cnColor: '#facc15',
-    verticalPosition: 3
+    verticalPosition: 10
   });
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -185,6 +207,19 @@ export const App: React.FC = () => {
       }
   };
 
+  const processSelectedFile = useCallback((file: File) => {
+      setErrorMsg(null);
+      const url = URL.createObjectURL(file);
+      setVideoData({ file, url, duration: 0 });
+      setStatus('idle');
+      setSubtitles([]);
+      setExportProgress(0);
+      setExportTimeLeft(null);
+      setExportResult(null);
+      setIsPreviewMode(false);
+      cachedExportRef.current = null;
+  }, []);
+
   // Core Processing Logic extracted for re-use
   const executeGeneration = async () => {
     if (!videoData.file) return;
@@ -195,8 +230,8 @@ export const App: React.FC = () => {
     setErrorMsg(null);
 
     try {
-      // PASS THE SELECTED MODEL HERE
-      const result = await generateSubtitles(videoData.file, selectedModel, (newStatus) => {
+      // PASS THE SELECTED MODEL AND TRANSLATION MODE HERE
+      const result = await generateSubtitles(videoData.file, selectedModel, translationMode, (newStatus) => {
         setStatus(newStatus);
         if (newStatus === 'analyzing') {
             setUploadStartTime(null);
@@ -301,25 +336,24 @@ export const App: React.FC = () => {
     };
   }, [videoData.url]);
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const file = files[0];
-      setErrorMsg(null);
-      const url = URL.createObjectURL(file);
-      setVideoData({ file, url, duration: 0 });
-      setStatus('idle');
-      setSubtitles([]);
-      setExportProgress(0);
-      setExportTimeLeft(null);
-      setExportResult(null);
-      setIsPreviewMode(false);
-      cachedExportRef.current = null;
+      processSelectedFile(file);
     }
     e.target.value = '';
-  };
+  }, [processSelectedFile]);
 
-  const handleSeek = (time: number) => {
+  const handleFileDrop = useCallback((file: File) => {
+    processSelectedFile(file);
+  }, [processSelectedFile]);
+
+  const handleTriggerFileSelect = useCallback(() => {
+      fileInputRef.current?.click();
+  }, []);
+
+  const handleSeek = useCallback((time: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = time;
       videoRef.current.play().catch((e) => {
@@ -327,7 +361,7 @@ export const App: React.FC = () => {
       });
       setCurrentTime(time);
     }
-  };
+  }, []);
 
   const handleProcess = async () => {
     if (!videoData.file) return;
@@ -370,7 +404,6 @@ export const App: React.FC = () => {
     executeGeneration();
   };
 
-  // ... (downloadSRT, handleExportBurned, drawText, drawFrame functions remain unchanged) ...
   const downloadSRT = () => {
     if (subtitles.length === 0) return;
     let srtContent = '';
@@ -671,8 +704,9 @@ export const App: React.FC = () => {
     });
   };
 
+  // Switch to h-[100svh] for stable viewport height on mobile
   return (
-    <div className="h-screen bg-[#0B0F17] text-slate-200 flex flex-col font-sans overflow-hidden">
+    <div className="h-[100svh] bg-[#0B0F17] text-slate-200 flex flex-col font-sans overflow-hidden">
       <canvas ref={exportCanvasRef} className="hidden" />
 
       {/* Exit Confirmation Modal */}
@@ -742,23 +776,26 @@ export const App: React.FC = () => {
       {/* Error Modal */}
       {errorMsg && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-            <div className="bg-[#161B22] p-6 rounded-xl border border-red-500/50 shadow-2xl w-full max-w-2xl flex flex-col max-h-[85vh]">
-                <div className="flex items-start gap-4 flex-1 min-h-0">
-                    <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0 mt-1">
+            <div className="bg-[#161B22] w-full max-w-2xl rounded-xl border border-red-500/50 shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+                {/* Header & Content */}
+                <div className="p-4 md:p-6 pb-0 flex gap-4 flex-1 min-h-0">
+                    <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                         </svg>
                     </div>
-                    <div className="flex-1 min-w-0 flex flex-col h-full">
+                    <div className="flex-1 min-w-0 flex flex-col">
                         <h3 className="text-lg font-bold text-white mb-2 flex-shrink-0">生成失败</h3>
-                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar bg-black/20 rounded-lg border border-white/5 p-3">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar bg-black/20 rounded-lg border border-white/5 p-3">
                              <p className="text-slate-300 text-xs leading-relaxed break-words whitespace-pre-wrap font-mono select-text">
                                 {errorMsg}
                              </p>
                         </div>
                     </div>
                 </div>
-                <div className="mt-6 flex justify-end gap-3 flex-shrink-0">
+                
+                {/* Footer */}
+                <div className="p-4 md:p-6 pt-4 flex justify-end gap-3 flex-shrink-0 bg-[#161B22]">
                     <button 
                         onClick={() => {
                             if (errorMsg) {
@@ -767,7 +804,7 @@ export const App: React.FC = () => {
                                 setTimeout(() => setCopySuccess(false), 2000);
                             }
                         }}
-                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition-colors font-medium text-sm flex items-center gap-2 group"
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition-colors font-medium text-sm flex items-center gap-2 group whitespace-nowrap"
                     >
                         {copySuccess ? (
                              <>
@@ -787,7 +824,7 @@ export const App: React.FC = () => {
                     </button>
                     <button 
                         onClick={() => setErrorMsg(null)} 
-                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors font-medium text-sm"
+                        className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors font-medium text-sm whitespace-nowrap"
                     >
                         关闭
                     </button>
@@ -797,7 +834,7 @@ export const App: React.FC = () => {
       )}
 
       <header className="bg-[#161B22]/80 border-b border-white/5 backdrop-blur-sm sticky top-0 z-50 flex-shrink-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 bg-gradient-to-tr from-blue-600 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/30">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor">
@@ -831,7 +868,8 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Content Area - Set Height to viewport minus header */}
-      <main className="flex-grow p-4 lg:p-6 max-w-7xl mx-auto w-full relative h-[calc(100vh-64px)] overflow-hidden">
+      {/* Reduce padding on mobile (p-2) to allow full width player */}
+      <main className="flex-grow px-4 pt-8 pb-6 lg:p-6 max-w-[1920px] mx-auto w-full relative h-full lg:h-[calc(100vh-64px)] overflow-y-auto lg:overflow-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
         
         {/* Floating Background Task UI */}
         {isExporting && (
@@ -888,10 +926,13 @@ export const App: React.FC = () => {
         )}
 
         {/* Main Layout Grid - Height 100% of parent */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full">
+        {/* Reduce gap on mobile */}
+        {/* Changed from grid to flex-col on mobile to allow better height distribution */}
+        <div className="flex flex-col lg:grid lg:grid-cols-12 gap-3 lg:gap-6 h-full">
           
           {/* Left Column: Player & Controls - Scrolls if needed on small screens, fixed on large */}
-          <div className="lg:col-span-8 flex flex-col gap-6 overflow-y-auto lg:overflow-visible pr-2">
+          {/* Remove pr-2 on mobile (pr-0) to utilize full width */}
+          <div className="lg:col-span-8 flex flex-col gap-4 overflow-visible pr-0 lg:pr-2 lg:h-full flex-shrink-0">
             <Player 
               ref={videoRef}
               videoUrl={videoData.url}
@@ -900,12 +941,15 @@ export const App: React.FC = () => {
               subStyle={subStyle}
               isExporting={isExporting}
               isPreviewMode={isPreviewMode}
-              onTriggerFileSelect={() => fileInputRef.current?.click()}
+              onTriggerFileSelect={handleTriggerFileSelect}
+              onFileDrop={handleFileDrop}
               onTimeUpdate={handleTimeUpdate}
+              // Switch to h-[35svh] to match root container sync
+              className="w-full h-[35svh] min-h-[300px] lg:h-auto lg:flex-1 lg:min-h-0 lg:aspect-auto"
             />
 
-            <div className="bg-[#0D1117] p-6 rounded-2xl border border-white/5 shadow-xl">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="bg-[#0D1117] p-4 lg:p-5 rounded-2xl border border-white/5 shadow-xl flex-shrink-0">
+                <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
                    <input
                       ref={fileInputRef}
                       type="file"
@@ -914,19 +958,21 @@ export const App: React.FC = () => {
                       className="hidden"
                     />
                     
-                    {/* Left Group: Change Video & Regenerate */}
-                    <div className="w-full sm:w-auto flex gap-3">
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          className="flex-1 sm:flex-none px-6 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm"
-                        >
-                          {videoData.file ? '更换视频' : '上传视频'}
-                        </button>
+                    {/* Left Group: Change Video & Regenerate - Full width on mobile, auto on desktop */}
+                    <div className="w-full lg:w-auto flex gap-3 flex-shrink-0">
+                        {videoData.file && (
+                          <button
+                            onClick={handleTriggerFileSelect}
+                            className="flex-1 lg:flex-none px-6 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm whitespace-nowrap"
+                          >
+                            更换视频
+                          </button>
+                        )}
 
                         {videoData.file && status === 'completed' && (
                             <button
                               onClick={handleProcess}
-                              className="flex-1 sm:flex-none px-6 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm"
+                              className="flex-1 lg:flex-none px-6 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm whitespace-nowrap"
                             >
                               重新生成
                             </button>
@@ -934,62 +980,109 @@ export const App: React.FC = () => {
                     </div>
 
                     {/* Right Group: Status Indicators & Primary Action */}
-                    <div className="flex items-center gap-4 w-full sm:w-auto justify-end">
-                        {/* Model Selector */}
-                        <div className="relative">
-                            <button 
-                                onClick={() => !isExporting && setShowModelMenu(!showModelMenu)}
-                                disabled={isExporting || (status === 'analyzing' || status === 'uploading')}
-                                className={`flex items-center gap-2 px-3 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm ${
-                                    (isExporting || (status === 'analyzing' || status === 'uploading')) ? 'opacity-50 cursor-not-allowed' : ''
-                                }`}
-                            >
-                                <span>{MODELS.find(m => m.id === selectedModel)?.label.split(' ')[0]}</span>
-                                <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform ${showModelMenu ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                                </svg>
-                            </button>
-                            
-                            {showModelMenu && (
-                                <>
-                                    <div className="fixed inset-0 z-10" onClick={() => setShowModelMenu(false)}></div>
-                                    <div className="absolute bottom-full mb-2 right-0 w-64 bg-[#161B22] border border-slate-700 shadow-xl rounded-lg py-1 z-20 max-h-60 overflow-y-auto custom-scrollbar">
-                                        {MODELS.map(m => (
-                                            <button 
-                                                key={m.id}
-                                                disabled={m.disabled}
-                                                onClick={() => { setSelectedModel(m.id); setShowModelMenu(false); }}
-                                                className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between ${
-                                                    m.disabled 
-                                                    ? 'text-slate-600 cursor-not-allowed bg-slate-900/50' 
-                                                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                                                } ${selectedModel === m.id ? 'bg-blue-600/10 text-blue-400' : ''}`}
-                                            >
-                                                <span>{m.label}</span>
-                                                {selectedModel === m.id && (
-                                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
-                                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                                    </svg>
-                                                )}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </>
-                            )}
+                    {/* Mobile: Column layout (Stacked). Desktop: Row layout. */}
+                    <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 w-full lg:w-auto lg:justify-end">
+                        
+                        {/* Group Dropdowns: On mobile they share a row. On desktop they are part of the main row. */}
+                        <div className="flex gap-3 w-full lg:w-auto flex-shrink-0">
+                            {/* Translation Mode Selector */}
+                            <div className="relative flex-1 lg:flex-none lg:w-auto">
+                                <button 
+                                    onClick={() => !isExporting && setShowTransMenu(!showTransMenu)}
+                                    disabled={isExporting || (status === 'analyzing' || status === 'uploading')}
+                                    className={`w-full lg:w-auto flex items-center justify-between lg:justify-start gap-2 px-3 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm whitespace-nowrap min-w-[120px] ${
+                                        (isExporting || (status === 'analyzing' || status === 'uploading')) ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}
+                                >
+                                    <span className="truncate">{TRANS_MODES.find(m => m.id === translationMode)?.label}</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform flex-shrink-0 ${showTransMenu ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                
+                                {showTransMenu && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={() => setShowTransMenu(false)}></div>
+                                        {/* Changed z-20 to z-[100] */}
+                                        <div className="absolute bottom-full mb-2 left-0 lg:left-auto lg:right-0 w-48 bg-[#161B22] border border-slate-700 shadow-xl rounded-lg py-1 z-[100] overflow-hidden">
+                                            {TRANS_MODES.map(m => (
+                                                <button 
+                                                    key={m.id}
+                                                    onClick={() => { setTranslationMode(m.id as TranslationMode); setShowTransMenu(false); }}
+                                                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between whitespace-nowrap ${
+                                                        selectedModel === m.id ? 'bg-blue-600/10 text-blue-400' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                                    }`}
+                                                >
+                                                    <span>{m.label}</span>
+                                                    {translationMode === m.id && (
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                        </svg>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+
+                            {/* Model Selector */}
+                            <div className="relative flex-1 lg:flex-none lg:w-auto">
+                                <button 
+                                    onClick={() => !isExporting && setShowModelMenu(!showModelMenu)}
+                                    disabled={isExporting || (status === 'analyzing' || status === 'uploading')}
+                                    className={`w-full lg:w-auto flex items-center justify-between lg:justify-start gap-2 px-3 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm whitespace-nowrap min-w-[140px] ${
+                                        (isExporting || (status === 'analyzing' || status === 'uploading')) ? 'opacity-50 cursor-not-allowed' : ''
+                                    }`}
+                                >
+                                    <span className="truncate">{MODELS.find(m => m.id === selectedModel)?.label.split(' ')[0]}</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform flex-shrink-0 ${showModelMenu ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                
+                                {showModelMenu && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={() => setShowModelMenu(false)}></div>
+                                        {/* Changed z-20 to z-[100] */}
+                                        <div className="absolute bottom-full mb-2 right-0 w-64 bg-[#161B22] border border-slate-700 shadow-xl rounded-lg py-1 z-[100] max-h-60 overflow-y-auto custom-scrollbar">
+                                            {MODELS.map(m => (
+                                                <button 
+                                                    key={m.id}
+                                                    disabled={m.disabled}
+                                                    onClick={() => { setSelectedModel(m.id); setShowModelMenu(false); }}
+                                                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between whitespace-nowrap ${
+                                                        m.disabled 
+                                                        ? 'text-slate-600 cursor-not-allowed bg-slate-900/50' 
+                                                        : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                                    } ${selectedModel === m.id ? 'bg-blue-600/10 text-blue-400' : ''}`}
+                                                >
+                                                    <span>{m.label}</span>
+                                                    {selectedModel === m.id && (
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                        </svg>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
                         </div>
 
                         {(status === 'analyzing' || status === 'uploading') && (
-                             <div className="flex items-center gap-3 text-blue-400 font-medium animate-pulse bg-blue-900/20 px-4 py-2 rounded-lg border border-blue-800/50">
+                             <div className="w-full lg:w-auto flex items-center gap-3 text-blue-400 font-medium animate-pulse bg-blue-900/20 px-4 py-2 rounded-lg border border-blue-800/50 flex-shrink-0">
                                <svg className="animate-spin h-5 w-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                </svg>
                                <div className="flex flex-col">
-                                   <span className="text-sm">
+                                   <span className="text-sm whitespace-nowrap">
                                        {status === 'uploading' ? '正在上传视频...' : 'AI 正在分析...'}
                                    </span>
                                    {status === 'uploading' && videoData.file && (
-                                       <span className="text-xs text-blue-300/70 font-normal">
+                                       <span className="text-xs text-blue-300/70 font-normal whitespace-nowrap">
                                           {(videoData.file.size / (1024 * 1024)).toFixed(1)} MB • {uploadElapsed}s
                                        </span>
                                    )}
@@ -997,12 +1090,12 @@ export const App: React.FC = () => {
                              </div>
                         )}
 
-                        {/* Start Button - Only show when idle or error */}
+                        {/* Start Button - Full Width on Mobile, Auto on Desktop */}
                         {(status === 'idle' || status === 'error') && (
                          <button
                            onClick={handleProcess}
                            disabled={!videoData.file}
-                           className={`flex-1 sm:flex-none px-8 py-2.5 rounded-lg font-bold transition-all shadow-lg hover:shadow-blue-500/20 hover:-translate-y-0.5 text-sm ${
+                           className={`w-full lg:w-auto px-8 py-2.5 rounded-lg font-bold transition-all shadow-lg hover:shadow-blue-500/20 hover:-translate-y-0.5 text-sm whitespace-nowrap flex-shrink-0 ${
                              !videoData.file
                                ? 'bg-[#21262D] text-slate-600 cursor-not-allowed border border-white/5'
                                : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-500/30'
@@ -1014,39 +1107,66 @@ export const App: React.FC = () => {
 
                         {/* Completed State Actions */}
                         {status === 'completed' && (
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 w-full lg:w-auto flex-shrink-0">
                               <button
                                 onClick={downloadSRT}
-                                className="px-4 py-2 bg-[#21262D] hover:bg-[#30363D] text-slate-300 rounded-lg text-sm border border-white/10 transition-colors"
+                                className="flex-1 lg:flex-none px-4 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-300 rounded-lg text-sm border border-white/10 transition-colors whitespace-nowrap"
                               >
                                 下载 SRT
                               </button>
                               
-                              <div className="flex items-center gap-0 bg-[#21262D] rounded-lg border border-white/10 p-1">
-                                  <select 
-                                     value={exportFormat}
-                                     onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
-                                     disabled={isExporting}
-                                     className="bg-transparent text-sm text-slate-300 focus:outline-none px-2 py-0.5 cursor-pointer border-r border-white/10 mr-2"
-                                  >
-                                     <option value="mp4">MP4</option>
-                                     <option value="webm">WebM</option>
-                                     <option value="mov">MOV</option>
-                                     <option value="mkv">MKV</option>
-                                     <option value="avi">AVI</option>
-                                  </select>
-                                  <button
-                                    onClick={handleExportBurned}
+                              {/* Export Format Selector */}
+                              <div className="relative flex-1 lg:flex-none">
+                                <button 
+                                    onClick={() => !isExporting && setShowExportMenu(!showExportMenu)}
                                     disabled={isExporting}
-                                    className={`px-3 py-1 text-sm rounded-md transition-colors shadow-sm font-medium ${
-                                        isExporting 
-                                        ? 'text-slate-500 cursor-not-allowed bg-slate-800'
-                                        : 'bg-blue-600 text-white hover:bg-blue-500'
+                                    className={`w-full lg:w-auto flex items-center justify-between lg:justify-start gap-2 px-3 py-2.5 bg-[#21262D] hover:bg-[#30363D] text-slate-200 rounded-lg font-medium transition-all border border-white/10 hover:border-white/20 shadow-sm text-sm whitespace-nowrap min-w-[90px] ${
+                                        isExporting ? 'opacity-50 cursor-not-allowed' : ''
                                     }`}
-                                  >
-                                    {isExporting ? '导出中...' : '导出视频'}
-                                  </button>
+                                >
+                                    <span className="truncate">{EXPORT_FORMATS.find(f => f.id === exportFormat)?.label}</span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform flex-shrink-0 ${showExportMenu ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                </button>
+                                
+                                {showExportMenu && (
+                                    <>
+                                        <div className="fixed inset-0 z-10" onClick={() => setShowExportMenu(false)}></div>
+                                        {/* Changed z-20 to z-[100] */}
+                                        <div className="absolute bottom-full mb-2 right-0 w-32 bg-[#161B22] border border-slate-700 shadow-xl rounded-lg py-1 z-[100] overflow-hidden">
+                                            {EXPORT_FORMATS.map(f => (
+                                                <button 
+                                                    key={f.id}
+                                                    onClick={() => { setExportFormat(f.id as ExportFormat); setShowExportMenu(false); }}
+                                                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center justify-between whitespace-nowrap ${
+                                                        exportFormat === f.id ? 'bg-blue-600/10 text-blue-400' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                                    }`}
+                                                >
+                                                    <span>{f.label}</span>
+                                                    {exportFormat === f.id && (
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                                                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                                        </svg>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
                               </div>
+
+                              <button
+                                onClick={handleExportBurned}
+                                disabled={isExporting}
+                                className={`flex-1 lg:flex-none px-3 py-2.5 text-sm rounded-lg transition-colors shadow-sm font-medium whitespace-nowrap ${
+                                    isExporting 
+                                    ? 'text-slate-500 cursor-not-allowed bg-slate-800'
+                                    : 'bg-blue-600 text-white hover:bg-blue-500'
+                                }`}
+                              >
+                                {isExporting ? '导出中...' : '导出视频'}
+                              </button>
                           </div>
                         )}
                     </div>
@@ -1054,119 +1174,150 @@ export const App: React.FC = () => {
             </div>
           </div>
 
-          {/* Right Column: Subtitle List & Settings - FIXED HEIGHT for internal scrolling */}
-          <div className="lg:col-span-4 flex flex-col gap-4 h-full overflow-hidden">
+          {/* Right Column: Subtitle List & Settings - Scrolls if needed on small screens */}
+          {/* Hide scrollbar visually but allow scrolling on mobile */}
+          <div className="lg:col-span-4 flex flex-col gap-2 lg:gap-4 h-auto lg:h-full lg:overflow-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
             
-            {/* Settings Panel - Fixed at top of right column */}
-            <div className="flex-shrink-0">
-                <div className="bg-[#161B22] p-4 rounded-xl border border-white/5 shadow-lg">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+            {/* Settings Panel - Collapsible */}
+            <div className="flex-shrink-0 bg-[#161B22] rounded-xl border border-white/5 shadow-lg overflow-hidden">
+                <button 
+                    onClick={() => setIsControlPanelOpen(!isControlPanelOpen)}
+                    className={`w-full flex items-center justify-between p-3 lg:p-4 bg-[#1F2937]/50 hover:bg-[#1F2937] transition-colors lg:pointer-events-none lg:bg-transparent lg:border-b lg:border-white/5 ${!isControlPanelOpen ? 'rounded-b-xl lg:rounded-none' : ''}`}
+                >
+                    <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
                             <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
                         </svg>
                         视图控制
-                      </h3>
-                      <button
-                            onClick={() => setIsPreviewMode(!isPreviewMode)}
-                            className={`text-xs px-2 py-1 rounded transition-colors border flex items-center gap-1 ${
-                                isPreviewMode 
-                                ? 'bg-blue-600 border-blue-500 text-white' 
-                                : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
-                            }`}
-                        >
-                            {isPreviewMode ? '关闭预览' : '预览样式'}
-                        </button>
-                    </div>
-                    
-                    <div className="flex bg-slate-800/50 p-1 rounded-lg mb-4">
-                        {(['dual', 'cn', 'en', 'off'] as SubtitleViewMode[]).map((mode) => (
+                    </h3>
+                    <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 text-slate-400 transition-transform duration-200 lg:hidden ${isControlPanelOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                </button>
+                
+                <div className={`${isControlPanelOpen ? 'block' : 'hidden'} lg:block bg-[#161B22]`}>
+                    <div className="p-4 pt-0 border-t border-white/5 mt-3 lg:border-none lg:pt-4 lg:mt-0">
+                        <div className="flex items-center justify-end mb-3">
                             <button
-                                key={mode}
-                                onClick={() => setViewMode(mode)}
-                                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
-                                    viewMode === mode 
-                                    ? 'bg-blue-600 text-white shadow-sm' 
-                                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
+                                onClick={() => setIsPreviewMode(!isPreviewMode)}
+                                className={`text-xs px-2 py-1 rounded transition-colors border flex items-center gap-1 ${
+                                    isPreviewMode 
+                                    ? 'bg-blue-600 border-blue-500 text-white' 
+                                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:bg-slate-700'
                                 }`}
                             >
-                                {mode === 'dual' ? '双语' : mode === 'cn' ? '仅中文' : mode === 'en' ? '仅英文' : '关闭'}
+                                {isPreviewMode ? '关闭预览' : '预览样式'}
                             </button>
-                        ))}
-                    </div>
-
-                    <div className="space-y-3">
-                        <div className="space-y-1">
-                            <div className="flex items-center justify-between">
-                                <span className="text-xs text-slate-400">位置</span>
-                                <span className="text-xs font-mono text-blue-400">{subStyle.verticalPosition}%</span>
-                            </div>
-                            <input 
-                                type="range" min="0" max="50" 
-                                value={subStyle.verticalPosition}
-                                onChange={(e) => {
-                                    const val = parseInt(e.target.value);
-                                    setSubStyle(prev => ({...prev, verticalPosition: val}));
-                                }}
-                                className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
-                            />
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                              <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs text-slate-400">中文</span>
-                                    <span className="text-xs font-mono text-blue-400">{subStyle.cnSize}px</span>
-                                  </div>
-                                  <input type="color" value={subStyle.cnColor} onChange={(e) => {
-                                      const val = e.target.value;
-                                      setSubStyle(prev => ({...prev, cnColor: val}));
-                                  }} className="h-4 w-4 rounded cursor-pointer border-0 bg-transparent p-0" />
-                              </div>
-                              <input 
-                                  type="range" min="10" max="60" 
-                                  value={subStyle.cnSize}
-                                  onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSubStyle(prev => ({...prev, cnSize: val}));
-                                  }}
-                                  className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
-                              />
-                          </div>
-                          <div className="space-y-1">
-                              <div className="flex items-center justify-between">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs text-slate-400">英文</span>
-                                    <span className="text-xs font-mono text-blue-400">{subStyle.enSize}px</span>
-                                  </div>
-                                  <input type="color" value={subStyle.enColor} onChange={(e) => {
-                                      const val = e.target.value;
-                                      setSubStyle(prev => ({...prev, enColor: val}));
-                                  }} className="h-4 w-4 rounded cursor-pointer border-0 bg-transparent p-0" />
-                              </div>
-                              <input 
-                                  type="range" min="10" max="60" 
-                                  value={subStyle.enSize}
-                                  onChange={(e) => {
-                                      const val = parseInt(e.target.value);
-                                      setSubStyle(prev => ({...prev, enSize: val}));
-                                  }}
-                                  className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
-                              />
-                          </div>
+                        
+                        <div className="flex bg-slate-800/50 p-1 rounded-lg mb-4">
+                            {(['dual', 'cn', 'en', 'off'] as SubtitleViewMode[]).map((mode) => (
+                                <button
+                                    key={mode}
+                                    onClick={() => setViewMode(mode)}
+                                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${
+                                        viewMode === mode 
+                                        ? 'bg-blue-600 text-white shadow-sm' 
+                                        : 'text-slate-400 hover:text-slate-200 hover:text-slate-200 hover:bg-slate-700/50'
+                                    }`}
+                                >
+                                    {mode === 'dual' ? '双语' : mode === 'cn' ? '仅中文' : mode === 'en' ? '仅英文' : '关闭'}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="space-y-3">
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs text-slate-400">位置</span>
+                                    <span className="text-xs font-mono text-blue-400">{subStyle.verticalPosition}%</span>
+                                </div>
+                                <input 
+                                    type="range" min="0" max="50" 
+                                    value={subStyle.verticalPosition}
+                                    onChange={(e) => {
+                                        const val = parseInt(e.target.value);
+                                        setSubStyle(prev => ({...prev, verticalPosition: val}));
+                                    }}
+                                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-400">中文</span>
+                                        <span className="text-xs font-mono text-blue-400">{subStyle.cnSize}px</span>
+                                    </div>
+                                    <input type="color" value={subStyle.cnColor} onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSubStyle(prev => ({...prev, cnColor: val}));
+                                    }} className="h-4 w-4 rounded cursor-pointer border-0 bg-transparent p-0" />
+                                </div>
+                                <input 
+                                    type="range" min="10" max="60" 
+                                    value={subStyle.cnSize}
+                                    onChange={(e) => {
+                                        const val = parseInt(e.target.value);
+                                        setSubStyle(prev => ({...prev, cnSize: val}));
+                                    }}
+                                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-400">英文</span>
+                                        <span className="text-xs font-mono text-blue-400">{subStyle.enSize}px</span>
+                                    </div>
+                                    <input type="color" value={subStyle.enColor} onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSubStyle(prev => ({...prev, enColor: val}));
+                                    }} className="h-4 w-4 rounded cursor-pointer border-0 bg-transparent p-0" />
+                                </div>
+                                <input 
+                                    type="range" min="10" max="60" 
+                                    value={subStyle.enSize}
+                                    onChange={(e) => {
+                                        const val = parseInt(e.target.value);
+                                        setSubStyle(prev => ({...prev, enSize: val}));
+                                    }}
+                                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full"
+                                />
+                            </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            {/* Subtitle List Component - Flex Grow to fill remaining height */}
-            <div className="flex-1 overflow-hidden min-h-0">
-              <SubtitleList 
-                subtitles={subtitles}
-                currentTime={currentTime}
-                onSeek={handleSeek}
-              />
+            {/* Subtitle List Component - Flex Grow to fill remaining height if open */}
+            <div className={`flex flex-col ${isSubtitleListOpen ? 'flex-1 min-h-[300px]' : 'flex-none'} lg:flex-1 lg:h-full lg:min-h-0 transition-none`}>
+                 <div className={`bg-[#161B22] border border-white/5 rounded-t-xl overflow-hidden flex-shrink-0 lg:hidden ${!isSubtitleListOpen ? 'rounded-b-xl' : ''}`}>
+                    <button 
+                        onClick={() => setIsSubtitleListOpen(!isSubtitleListOpen)}
+                        className={`w-full flex items-center justify-between p-3 lg:p-4 bg-[#1F2937]/50 hover:bg-[#1F2937] transition-colors ${!isSubtitleListOpen ? 'rounded-b-xl' : ''}`}
+                    >
+                        <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                            </svg>
+                            字幕列表 {subtitles.length > 0 && `(${subtitles.length})`}
+                        </h3>
+                        <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 text-slate-400 transition-transform duration-200 ${isSubtitleListOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                 </div>
+                 
+                 <div className={`flex-1 overflow-hidden min-h-0 border-x border-b border-white/5 rounded-b-xl lg:border-none lg:rounded-none bg-[#161B22] ${isSubtitleListOpen ? 'flex flex-col w-full' : 'hidden'} lg:flex lg:flex-col lg:w-full`}>
+                        <SubtitleList 
+                            subtitles={subtitles}
+                            currentTime={currentTime}
+                            onSeek={handleSeek}
+                        />
+                 </div>
             </div>
 
           </div>

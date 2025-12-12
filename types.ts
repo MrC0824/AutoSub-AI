@@ -10,6 +10,8 @@ export type ProcessingStatus = 'idle' | 'uploading' | 'analyzing' | 'completed' 
 
 export type SubtitleViewMode = 'dual' | 'en' | 'cn' | 'off';
 
+export type TranslationMode = 'en_to_cn' | 'cn_to_en';
+
 export interface VideoData {
   file: File | null;
   url: string | null;
