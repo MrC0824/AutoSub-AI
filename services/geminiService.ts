@@ -17,7 +17,6 @@ const fileToBase64 = async (file: File): Promise<string> => {
 };
 
 // Post-processing to ensure strictly sequential and non-overlapping subtitles
-// AND aggressively split long segments to prevent "frozen" UI
 const postProcessSubtitles = (subtitles: SubtitleSegment[]): SubtitleSegment[] => {
   if (!subtitles || subtitles.length === 0) return [];
 
@@ -25,54 +24,19 @@ const postProcessSubtitles = (subtitles: SubtitleSegment[]): SubtitleSegment[] =
   let sorted = [...subtitles].sort((a, b) => a.startTime - b.startTime);
   const processed: SubtitleSegment[] = [];
 
-  // 2. Aggressive splitting of long segments
-  const MAX_DURATION = 6.0; 
-
-  for (const segment of sorted) {
-    const duration = segment.endTime - segment.startTime;
+  // 2. Validate and Fix overlap
+  // We removed the aggressive splitting logic because it was breaking Chinese words arbitrarily.
+  // We now trust the model's segmentation based on the strict system instructions.
+  
+  for (let i = 0; i < sorted.length; i++) {
+    const segment = sorted[i];
     
-    // Safety fix: Ensure endTime > startTime
-    if (duration <= 0) {
-        segment.endTime = segment.startTime + 1.0;
+    // Safety: Ensure endTime > startTime
+    if (segment.endTime <= segment.startTime) {
+        segment.endTime = segment.startTime + 1.5;
     }
 
-    if (duration > MAX_DURATION) {
-        // Split logic
-        const enWords = segment.english.split(' ');
-        const cnText = segment.chinese; // Chinese is harder to split by space
-        
-        const chunkCount = Math.ceil(duration / 3.0); 
-        const chunkDuration = duration / chunkCount;
-        
-        const enWordsPerChunk = Math.ceil(enWords.length / chunkCount);
-        const cnCharsPerChunk = Math.ceil(cnText.length / chunkCount);
-
-        for (let k = 0; k < chunkCount; k++) {
-            const startT = segment.startTime + (k * chunkDuration);
-            const endT = segment.startTime + ((k + 1) * chunkDuration);
-            
-            // Slice English words
-            const startEn = k * enWordsPerChunk;
-            const endEn = Math.min((k + 1) * enWordsPerChunk, enWords.length);
-            const enPart = enWords.slice(startEn, endEn).join(' ');
-
-            // Slice Chinese chars
-            const startCn = k * cnCharsPerChunk;
-            const endCn = Math.min((k + 1) * cnCharsPerChunk, cnText.length);
-            const cnPart = cnText.substring(startCn, endCn);
-
-            if (enPart.trim() || cnPart.trim()) {
-                processed.push({
-                    startTime: Number(startT.toFixed(3)),
-                    endTime: Number(endT.toFixed(3)),
-                    english: enPart,
-                    chinese: cnPart
-                });
-            }
-        }
-    } else {
-        processed.push(segment);
-    }
+    processed.push(segment);
   }
 
   // 3. Fix overlaps and sequential timing
@@ -81,9 +45,17 @@ const postProcessSubtitles = (subtitles: SubtitleSegment[]): SubtitleSegment[] =
     
     if (i < processed.length - 1) {
       const next = processed[i + 1];
+      
       // If current segment runs into the next one, trim it
       if (current.endTime > next.startTime) {
-        current.endTime = next.startTime;
+        // If the overlap is tiny, just trim current
+        if (current.endTime - next.startTime < 1.0) {
+            current.endTime = next.startTime;
+        } else {
+            // If overlap is large, it might be a hallucination or bad timing.
+            // Adjust current end to next start to avoid visual clash.
+            current.endTime = next.startTime;
+        }
       }
     }
   }
@@ -131,7 +103,7 @@ export const generateSubtitles = async (
         },
         chinese: {
           type: Type.STRING,
-          description: "Chinese text content (transcription or translation).",
+          description: "Chinese text content (transcription or translation). MUST BE Simplified Chinese (zh-CN).",
         },
       },
       required: ["startTime", "endTime", "english", "chinese"],
@@ -139,34 +111,38 @@ export const generateSubtitles = async (
   };
 
   const taskInstruction = translationMode === 'en_to_cn' 
-      ? "Transcribe the English audio and translate it to Simplified Chinese."
-      : "Transcribe the Chinese audio and translate it to English.";
+      ? "Transcribe the English audio and translate it to Simplified Chinese (zh-CN). Use standard Mainland China terminology. Do NOT use Traditional Chinese."
+      : "Transcribe the Chinese audio into Simplified Chinese (zh-CN) text and translate it to English. The Chinese transcription must be in Simplified characters.";
 
-  const systemInstruction = `You are a professional video subtitler obsessed with frame-perfect audio synchronization.
+  const systemInstruction = `You are a professional video subtitler.
         
   TASK:
   1. ${taskInstruction}
   2. Output a JSON array of subtitle segments.
 
-  CRITICAL RULES FOR 100% SYNC (STRICT ADHERENCE REQUIRED):
-  1. **FRAME-PERFECT TIMING**: 
-     - 'startTime' must match the EXACT millisecond the voice starts visible on the waveform.
-     - 'endTime' must match the EXACT millisecond the voice stops.
-     - **DO NOT** add buffer time. Precision is key.
-  2. **SEGMENTATION BALANCE**:
-     - **Target Duration**: 3 to 5 seconds per segment.
-     - **Max Duration**: 6 seconds. (Strict limit).
-     - **Min Duration**: 1.5 seconds.
-     - **Max Length**: 12-14 words per line.
-  3. **FAST SPEECH**: If speech is fast, DO NOT merge sentences. You MUST split them based on grammatical pauses.
-  4. **NO OVERLAPS**: Subtitles must be strictly sequential.
-  5. **SINGLE LINE**: Visuals must be clean. No paragraphs.
-  6. **VAD SIMULATION**: If there is silence, close the subtitle segment immediately.
+  CRITICAL RULES FOR LANGUAGE (STRICT):
+  - **SIMPLIFIED CHINESE ONLY**: All Chinese text output MUST be in Simplified Chinese (zh-CN).
+  - If the source audio or text is Traditional Chinese, you MUST convert it to Simplified Chinese.
+  - Use Mainland China vocabulary (e.g., "视频" not "影片", "软件" not "软体").
 
-  Your goal is "Karaoke-level" timing precision.`;
+  CRITICAL RULES FOR TIMING AND SEGMENTATION:
+  1. **Split sentences naturally**: Do NOT put an entire paragraph in one subtitle. Split long sentences into multiple segments based on natural pauses and grammar.
+  2. **Max Duration**: Each segment should ideally be between 2 to 5 seconds. NEVER exceed 7 seconds.
+  3. **No word breaking**: When splitting Chinese text, NEVER split in the middle of a word or phrase.
+  4. **Precise Timing**: Sync 'startTime' and 'endTime' exactly with the voice.
+  5. **No Overlaps**: Ensure segments do not overlap in time.
+
+  Your goal is clean, readable, Simplified Chinese subtitles.`;
 
   try {
     const INLINE_LIMIT_BYTES = 20 * 1024 * 1024; // 20 MB
+    
+    // Explicit prompt to reinforce the system instruction
+    const userPrompt = `Generate strictly synced bilingual subtitles in JSON format.
+    REQUIREMENTS:
+    1. Translate/Transcribe to Simplified Chinese (zh-CN) ONLY.
+    2. Convert any Traditional Chinese to Simplified.
+    3. Keep segments short (max 6 seconds) but split naturally at grammatical points.`;
 
     let response;
 
@@ -184,14 +160,14 @@ export const generateSubtitles = async (
                             data: base64Data
                         }
                     },
-                    { text: "Generate strictly synced bilingual subtitles in JSON format." }
+                    { text: userPrompt }
                 ]
             },
             config: {
                 systemInstruction,
                 responseMimeType: "application/json",
                 responseSchema,
-                temperature: 0.0,
+                temperature: 0.1, // Lower temperature for more consistent following of rules
             }
         });
 
@@ -247,14 +223,14 @@ export const generateSubtitles = async (
                             fileUri: fileUri
                         }
                     },
-                    { text: "Generate strictly synced bilingual subtitles in JSON format." }
+                    { text: userPrompt }
                 ]
             },
             config: {
                 systemInstruction,
                 responseMimeType: "application/json",
                 responseSchema,
-                temperature: 0.0,
+                temperature: 0.1,
             }
         });
 
