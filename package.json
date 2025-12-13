@@ -1,7 +1,7 @@
 {
   "name": "autosub-ai",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AutoSub AI - 中英双语字幕生成器",
   "main": "electron.main.js",
   "homepage": "./",
