@@ -1,0 +1,5 @@
+{
+  "name": "AutoSub",
+  "description": "上传英文视频，自动生成中英双语字幕。基于 Google Gemini 2.5 Flash 模型，快速精准。",
+  "requestFramePermissions": []
+}

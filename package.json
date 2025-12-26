@@ -1,0 +1,106 @@
+{
+  "name": "AutoSub",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AutoSub 中英双语字幕生成器",
+  "main": "electron.main.js",
+  "homepage": "./",
+  "author": "Gemini",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MrC0824/AutoSub.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on tcp:5173 && electron .\"",
+    "electron:build": "pnpm run build && electron-builder && node -e \"const fs=require('fs'); const p=['release/builder-debug.yml', 'release/builder-effective-config.yaml']; p.forEach(f=>{try{fs.unlinkSync(f)}catch(e){}});\"",
+    "release:patch": "pnpm version patch && git push --follow-tags",
+    "release:minor": "pnpm version minor && git push --follow-tags",
+    "release:major": "pnpm version major && git push --follow-tags",
+    "release": "pnpm version patch && git push --follow-tags"
+  },
+  "packageManager": "pnpm@9.0.6",
+  "ciConfig": {
+    "packageManager": "pnpm"
+  },
+  "dependencies": {
+    "@google/genai": "*",
+    "builder-util-runtime": "^9.2.4",
+    "electron-updater": "^6.3.9",
+    "fs-extra": "^11.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3",
+    "esbuild": "^0.27.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.2.2",
+    "vite": "^5.2.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.autosub.ai",
+    "productName": "AutoSub",
+    "copyright": "Copyright © 2025 Gemini",
+	  "compression": "store",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "electron.main.js",
+      "package.json",
+      "public/**/*"
+    ],
+	"publish": [
+      {
+        "provider": "github",
+        "owner": "MrC0824",
+        "repo": "AutoSub",
+        "releaseType": "release"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "icon": "public/favicon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/favicon.ico",
+      "uninstallerIcon": "public/favicon.ico",
+      "installerHeaderIcon": "public/favicon.ico",
+      "include": "build/installer.nsh",	  
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "artifactName": "${productName}_Setup.exe"
+    },
+    "portable": {
+      "artifactName": "${productName}_Portable.exe"
+    }
+  }
+}
