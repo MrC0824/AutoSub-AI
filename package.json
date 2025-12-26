@@ -52,7 +52,7 @@
     "appId": "com.autosub.ai",
     "productName": "AutoSub",
     "copyright": "Copyright © 2025 Gemini",
-	  "compression": "store",
+    "compression": "store",
     "asar": true,
     "files": [
       "dist/**/*",
@@ -60,7 +60,7 @@
       "package.json",
       "public/**/*"
     ],
-	"publish": [
+    "publish": [
       {
         "provider": "github",
         "owner": "MrC0824",
@@ -94,7 +94,7 @@
       "installerIcon": "public/favicon.ico",
       "uninstallerIcon": "public/favicon.ico",
       "installerHeaderIcon": "public/favicon.ico",
-      "include": "build/installer.nsh",	  
+      "include": "build/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "artifactName": "${productName}_Setup.exe"
